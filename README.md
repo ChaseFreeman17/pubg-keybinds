@@ -63,6 +63,26 @@ gamepad slot is left completely alone.
 Removing a binding here clears just that slot rather than deleting the whole
 action entry, since the entry commonly still has other slots in use.
 
+## Some bindings never appear no matter what (and that's expected)
+
+PUBG only writes a binding to `GameUserSettings.ini` once you've changed it
+from default **in that specific category**. Confirmed by direct comparison
+against a real PUBG client's in-game Key Bindings screen: an entire category
+("Basic Combat" — Primary/Secondary Weapon, Melee, Throwables, Cycle Firing
+Mode, Holster Weapons) was completely absent from every field in a real
+70KB config file, even though the in-game screen showed full default values
+(1, 2, 3, 4, 5, B, X) for all of them. This isn't a parser bug — those
+strings simply don't exist anywhere in the file under any name.
+
+To at least show these, `js/keydata.js` includes a small `KNOWN_DEFAULTS`
+list transcribed directly from a real client's screenshot (not guessed).
+These render on the diagrams with a **dashed border** instead of a solid
+fill, get their own "Known defaults" sidebar section, and are clearly
+labeled as unconfirmed-in-file — they have no backing ini node, so they can
+never be edited or exported here. The only way to make one of these real
+(editable, exportable) is to rebind it once in-game — even to the same key —
+which forces PUBG to finally write it to the file; then re-upload.
+
 ## Action name reference
 
 The sidebar's friendly labels (e.g. "Aim (ADS)") come from `ACTION_REFERENCE`

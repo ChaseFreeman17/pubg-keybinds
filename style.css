@@ -99,11 +99,19 @@ h1, h2 { margin: 0; }
 .key.spacer { background: transparent; border: none; cursor: default; }
 .key.bound { font-weight: 600; color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,0.45); }
 .key.listening-target { outline: 2px dashed var(--accent); outline-offset: 1px; }
+.key.default-overlay, .mouse-btn.default-overlay { border-style: dashed; border-width: 2px; }
 .key .dot { position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; border-radius: 50%; }
 
 .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 10px; font-size: 0.75rem; color: var(--muted); }
 .legend-item { display: flex; align-items: center; gap: 5px; }
 .legend-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--key-border); }
+.legend-swatch.dashed { background: transparent !important; border: 2px dashed var(--muted); }
+
+.known-defaults-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.known-default-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  border: 1px dashed var(--border); border-radius: 6px; padding: 5px 9px; font-size: 0.8rem;
+}
 
 .mouse-diagram { display: flex; gap: 10px; flex-wrap: wrap; }
 .mouse-btn {

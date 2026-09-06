@@ -1,10 +1,12 @@
 /* app.js — wiring: load file, parse, render keyboard/mouse, edit, export, compare. */
 (function () {
   const { KEYBOARD_LAYOUT, NAV_LAYOUT, NUMPAD_LAYOUT, MOUSE_BUTTONS,
-          ACTION_REFERENCE, CATEGORY_COLORS, describeAction, ueKeyLabel } = window.keydata;
+          ACTION_REFERENCE, CATEGORY_COLORS, KNOWN_DEFAULTS, describeAction, ueKeyLabel } = window.keydata;
   const ueini = window.ueini;
   const COLS_PER_UNIT = 4;
   const MOUSE_KEY_SET = new Set(MOUSE_BUTTONS.map((b) => b.id));
+  const DEFAULTS_BY_KEY = {};
+  for (const d of KNOWN_DEFAULTS) (DEFAULTS_BY_KEY[d.ueKey] = DEFAULTS_BY_KEY[d.ueKey] || []).push(d);
 
   const state = {
     rawText: null, filename: null, lineStart: 0, lineEnd: 0,
@@ -107,25 +109,32 @@
       const key = elm.dataset.key;
       const bindings = state.keyToBindings[key];
       const bound = bindings && bindings.length > 0;
+      const defaults = !bound ? (DEFAULTS_BY_KEY[key] || []) : [];
       elm.classList.toggle('bound', !!bound);
+      elm.classList.toggle('default-overlay', !bound && defaults.length > 0);
       elm.classList.toggle('listening-target', !!state.listening);
       if (bound) {
         const color = CATEGORY_COLORS[describeAction(bindings[0].name).category] || CATEGORY_COLORS.Other;
         elm.style.background = color;
         elm.style.borderColor = color;
         elm.title = key + ': ' + bindings.map((b) => describeAction(b.name).label).join(', ');
+      } else if (defaults.length > 0) {
+        const color = CATEGORY_COLORS[defaults[0].category] || CATEGORY_COLORS.Other;
+        elm.style.background = '';
+        elm.style.borderColor = color;
+        elm.title = key + ' — default only, not saved to your file: ' + defaults.map((d) => d.label).join(', ');
       } else {
         elm.style.background = '';
         elm.style.borderColor = '';
         elm.title = key;
       }
     });
-    renderLegend('keyboardLegend', (it) => !MOUSE_KEY_SET.has(it.ueKey));
-    renderLegend('mouseLegend', (it) => MOUSE_KEY_SET.has(it.ueKey));
+    renderLegend('keyboardLegend', (it) => !MOUSE_KEY_SET.has(it.ueKey), (d) => !MOUSE_KEY_SET.has(d.ueKey));
+    renderLegend('mouseLegend', (it) => MOUSE_KEY_SET.has(it.ueKey), (d) => MOUSE_KEY_SET.has(d.ueKey));
     renderMouseExtraButtons();
   }
 
-  function renderLegend(containerId, filterFn) {
+  function renderLegend(containerId, filterFn, defaultsFilterFn) {
     const container = el(containerId);
     if (!container) return;
     const cats = new Set();
@@ -135,14 +144,38 @@
     const sorted = [...cats].sort();
     let html = sorted.map((c) => `<span class="legend-item"><span class="legend-swatch" style="background:${CATEGORY_COLORS[c] || CATEGORY_COLORS.Other}"></span>${c}</span>`).join('');
     html += `<span class="legend-item"><span class="legend-swatch" style="background:var(--key-bg)"></span>Not in use</span>`;
+    if (KNOWN_DEFAULTS.some(defaultsFilterFn)) {
+      html += `<span class="legend-item"><span class="legend-swatch dashed"></span>Default only (not in file)</span>`;
+    }
     container.innerHTML = html;
+  }
+
+  function renderKnownDefaultsList() {
+    const container = el('knownDefaultsList');
+    if (!container) return;
+    container.innerHTML = KNOWN_DEFAULTS.map((d) => {
+      // Note: this only tells us the physical key ALSO has some real binding in
+      // the file — it does NOT mean this specific default action was the one
+      // customized (e.g. key "1" may be genuinely bound to an unrelated
+      // Observer action while "Primary Weapon 1" itself is still the untouched
+      // default) — so the wording here is deliberately non-committal.
+      const otherReal = state.keyToBindings[d.ueKey] && state.keyToBindings[d.ueKey].length > 0;
+      return `<div class="known-default-row"><span>${d.label}${otherReal ? ' <span class="muted">(this key also has a real binding — see Bindings)</span>' : ''}</span><span class="key-pill">${ueKeyLabel(d.ueKey)}</span></div>`;
+    }).join('');
   }
 
   function showDetail(ueKey) {
     const bindings = state.keyToBindings[ueKey] || [];
     detailPanel.hidden = false;
     if (bindings.length === 0) {
-      detailBody.innerHTML = `<h3>${ueKeyLabel(ueKey)}</h3><p class="muted" style="font-size:0.85rem;">Nothing bound here. Use "Add binding" in the sidebar to bind an action to this key.</p>`;
+      const defaults = DEFAULTS_BY_KEY[ueKey] || [];
+      if (defaults.length > 0) {
+        detailBody.innerHTML = `<h3>${ueKeyLabel(ueKey)}</h3>` +
+          defaults.map((d) => `<div class="detail-binding"><span>${d.label} <span class="muted">(default)</span></span></div>`).join('') +
+          `<p class="muted" style="font-size:0.78rem;margin-top:8px;">This is PUBG's built-in default — not stored in your file, so it can't be edited or exported here. Rebind it once in-game to make it a real, editable entry.</p>`;
+      } else {
+        detailBody.innerHTML = `<h3>${ueKeyLabel(ueKey)}</h3><p class="muted" style="font-size:0.85rem;">Nothing bound here. Use "Add binding" in the sidebar to bind an action to this key.</p>`;
+      }
       return;
     }
     detailBody.innerHTML = `<h3>${ueKeyLabel(ueKey)}</h3>` + bindings.map((b) => {
@@ -294,6 +327,8 @@
     });
   }
   renderMouseExtraButtons();
+  updateHighlights();
+  renderKnownDefaultsList();
 
   function renderMouseExtraButtons() {
     if (!mouseExtraButtonsEl) return;
@@ -478,6 +513,7 @@
     updateHighlights();
     renderSidebar();
     renderCompareDiff();
+    renderKnownDefaultsList();
   }
 
   // ---------- add-binding form ----------

@@ -185,6 +185,25 @@ const CATEGORY_COLORS = {
   Other: '#8a8f98',
 };
 
+// PUBG only writes a binding to GameUserSettings.ini once you've changed it
+// from default in that category — categories nobody has touched (confirmed:
+// "Basic Combat" in the in-game Key Bindings screen) are simply absent from
+// every field in the file, not just the two we parse. These entries are
+// NOT derived from any file — they're transcribed directly from a real,
+// current PUBG client's Settings > Key Bindings > Combat > Basic Combat
+// screen (a user-supplied screenshot), so they're accurate defaults, but
+// they have no backing ini node: purely a read-only visual overlay, never
+// written into an exported file.
+const KNOWN_DEFAULTS = [
+  { label: 'Primary Weapon 1', category: 'Combat', ueKey: 'One' },
+  { label: 'Primary Weapon 2', category: 'Combat', ueKey: 'Two' },
+  { label: 'Secondary Weapon', category: 'Combat', ueKey: 'Three' },
+  { label: 'Melee Weapon', category: 'Combat', ueKey: 'Four' },
+  { label: 'Throwables', category: 'Combat', ueKey: 'Five' },
+  { label: 'Cycle Firing Mode', category: 'Combat', ueKey: 'B' },
+  { label: 'Holster Weapons', category: 'Combat', ueKey: 'X' },
+];
+
 function humanizeActionName(name) {
   // e.g. "ToggleCrouch" -> "Toggle Crouch", "StartFirePad" -> "Start Fire Pad"
   return name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
@@ -199,5 +218,5 @@ function describeAction(name) {
 window.keydata = {
   CODE_TO_UEKEY, UEKEY_LABEL, ueKeyLabel,
   KEYBOARD_LAYOUT, NAV_LAYOUT, NUMPAD_LAYOUT, MOUSE_BUTTONS,
-  ACTION_REFERENCE, CATEGORY_COLORS, describeAction,
+  ACTION_REFERENCE, CATEGORY_COLORS, KNOWN_DEFAULTS, describeAction,
 };
