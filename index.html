@@ -32,6 +32,7 @@
   <section class="diagrams">
     <div id="keyboardWrap" class="device-block">
       <h2>Keyboard</h2>
+      <div id="keyboardLegend" class="legend"></div>
       <div id="keyboardRow" class="kb-row">
         <div id="kbMain" class="kb-grid kb-main"></div>
         <div id="kbNav" class="kb-grid kb-nav"></div>
@@ -40,7 +41,21 @@
     </div>
     <div id="mouseWrap" class="device-block">
       <h2>Mouse</h2>
+      <div id="mouseLegend" class="legend"></div>
+      <div class="mouse-profile-row">
+        <label>Mouse type
+          <select id="mouseProfile">
+            <option value="none">Standard (5 buttons)</option>
+            <option value="plus3">+3 side buttons (8 total)</option>
+            <option value="mmoGrid">MMO thumb grid (+12 buttons)</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </label>
+        <input type="number" id="mouseCustomCount" min="1" max="24" placeholder="# extra" hidden>
+        <span class="muted">PUBG (Unreal Engine) only recognizes 5 physical mouse buttons — extra buttons on gaming mice work by having your mouse's own software send a keyboard key instead. Set what each one sends below.</span>
+      </div>
       <div id="mouseDiagram" class="mouse-diagram"></div>
+      <div id="mouseExtraButtons" class="mouse-extra-grid"></div>
     </div>
     <div id="detailPanel" class="detail-panel" hidden>
       <button class="detail-close" id="detailClose" aria-label="Close">&times;</button>

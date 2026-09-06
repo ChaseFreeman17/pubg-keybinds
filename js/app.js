@@ -4,6 +4,7 @@
           ACTION_REFERENCE, CATEGORY_COLORS, describeAction, ueKeyLabel } = window.keydata;
   const ueini = window.ueini;
   const COLS_PER_UNIT = 4;
+  const MOUSE_KEY_SET = new Set(MOUSE_BUTTONS.map((b) => b.id));
 
   const state = {
     rawText: null, filename: null, lineStart: 0, lineEnd: 0,
@@ -12,6 +13,7 @@
   };
   let nextId = 1;
   let compareState = null; // { filename, items: [...] } — read-only, from a second uploaded file
+  let expandedCategories = new Set(); // sidebar groups the user has manually opened (persists across re-renders)
 
   // ---------- DOM refs ----------
   const el = (id) => document.getElementById(id);
@@ -103,15 +105,37 @@
   function updateHighlights() {
     document.querySelectorAll('[data-key]').forEach((elm) => {
       const key = elm.dataset.key;
-      const bound = state.keyToBindings[key] && state.keyToBindings[key].length > 0;
+      const bindings = state.keyToBindings[key];
+      const bound = bindings && bindings.length > 0;
       elm.classList.toggle('bound', !!bound);
       elm.classList.toggle('listening-target', !!state.listening);
       if (bound) {
-        elm.title = key + ': ' + state.keyToBindings[key].map((b) => describeAction(b.name).label).join(', ');
+        const color = CATEGORY_COLORS[describeAction(bindings[0].name).category] || CATEGORY_COLORS.Other;
+        elm.style.background = color;
+        elm.style.borderColor = color;
+        elm.title = key + ': ' + bindings.map((b) => describeAction(b.name).label).join(', ');
       } else {
+        elm.style.background = '';
+        elm.style.borderColor = '';
         elm.title = key;
       }
     });
+    renderLegend('keyboardLegend', (it) => !MOUSE_KEY_SET.has(it.ueKey));
+    renderLegend('mouseLegend', (it) => MOUSE_KEY_SET.has(it.ueKey));
+    renderMouseExtraButtons();
+  }
+
+  function renderLegend(containerId, filterFn) {
+    const container = el(containerId);
+    if (!container) return;
+    const cats = new Set();
+    for (const item of state.items) {
+      if (filterFn(item)) cats.add(describeAction(item.name).category);
+    }
+    const sorted = [...cats].sort();
+    let html = sorted.map((c) => `<span class="legend-item"><span class="legend-swatch" style="background:${CATEGORY_COLORS[c] || CATEGORY_COLORS.Other}"></span>${c}</span>`).join('');
+    html += `<span class="legend-item"><span class="legend-swatch" style="background:var(--key-bg)"></span>Not in use</span>`;
+    container.innerHTML = html;
   }
 
   function showDetail(ueKey) {
@@ -125,10 +149,16 @@
       const d = describeAction(b.name);
       return `<div class="detail-binding"><span>${d.label}${b.kind === 'axis' ? ' <span class="muted">(axis)</span>' : ''}${b.slotIndex === 1 ? ' <span class="muted">(2nd)</span>' : ''}</span>
         <button data-remove="${b.id}" class="btn" style="padding:2px 8px;font-size:0.72rem;">Remove</button></div>`;
-    }).join('');
+    }).join('') + aliasBackrefNote(ueKey);
     detailBody.querySelectorAll('[data-remove]').forEach((btn) => {
       btn.addEventListener('click', () => removeItem(Number(btn.dataset.remove)));
     });
+  }
+
+  function aliasBackrefNote(ueKey) {
+    const slots = Object.entries(mouseAliasState.aliases).filter(([, k]) => k === ueKey).map(([slot]) => Number(slot) + 5);
+    if (slots.length === 0) return '';
+    return `<p class="muted" style="font-size:0.78rem;margin-top:8px;">Also sent by mouse Button ${slots.join(', ')} (per your mouse software mapping below).</p>`;
   }
 
   // ---------- sidebar ----------
@@ -149,13 +179,20 @@
       return;
     }
     for (const cat of categories) {
-      const title = document.createElement('div');
-      title.className = 'action-group-title';
-      title.textContent = cat;
-      actionListEl.appendChild(title);
+      const details = document.createElement('details');
+      details.className = 'action-group';
+      details.open = filter.length > 0 || expandedCategories.has(cat);
+      details.addEventListener('toggle', () => {
+        if (details.open) expandedCategories.add(cat); else expandedCategories.delete(cat);
+      });
+      const summary = document.createElement('summary');
+      summary.className = 'action-group-title';
+      summary.textContent = `${cat} (${grouped[cat].length})`;
+      details.appendChild(summary);
       for (const { item, d } of grouped[cat]) {
-        actionListEl.appendChild(renderActionRow(item, d));
+        details.appendChild(renderActionRow(item, d));
       }
+      actionListEl.appendChild(details);
     }
   }
 
@@ -210,6 +247,103 @@
     return modsLabel(getMods(item.holder)) + ueKeyLabel(item.ueKey);
   }
 
+  // ---------- extra mouse buttons (MMO/gaming mice) ----------
+  // PUBG (Unreal Engine) only recognizes 5 physical mouse buttons (LMB, RMB,
+  // MMB, and two "thumb" buttons). Anything beyond that on a gaming mouse
+  // works because the mouse's OWN software translates the extra button into
+  // a regular keyboard keystroke before PUBG ever sees it. So "binding" an
+  // extra button here just means recording, locally in this browser, which
+  // keyboard key your mouse software sends for it — never written to the ini.
+  const mouseProfileSel = el('mouseProfile');
+  const mouseCustomCountInput = el('mouseCustomCount');
+  const mouseExtraButtonsEl = el('mouseExtraButtons');
+
+  function loadMouseAliasState() {
+    try {
+      const raw = localStorage.getItem('pubgKeybinds.mouseAliases');
+      if (raw) return JSON.parse(raw);
+    } catch (e) { /* ignore, use default */ }
+    return { profile: 'none', customCount: 0, aliases: {} };
+  }
+  function saveMouseAliasState() {
+    try { localStorage.setItem('pubgKeybinds.mouseAliases', JSON.stringify(mouseAliasState)); } catch (e) { /* storage unavailable, skip */ }
+  }
+  let mouseAliasState = loadMouseAliasState();
+
+  function extraButtonCount() {
+    if (mouseAliasState.profile === 'plus3') return 3;
+    if (mouseAliasState.profile === 'mmoGrid') return 12;
+    if (mouseAliasState.profile === 'custom') return Math.max(0, Math.min(24, Number(mouseAliasState.customCount) || 0));
+    return 0;
+  }
+
+  if (mouseProfileSel) {
+    mouseProfileSel.value = mouseAliasState.profile;
+    mouseCustomCountInput.value = mouseAliasState.customCount || '';
+    mouseCustomCountInput.hidden = mouseAliasState.profile !== 'custom';
+    mouseProfileSel.addEventListener('change', () => {
+      mouseAliasState.profile = mouseProfileSel.value;
+      mouseCustomCountInput.hidden = mouseAliasState.profile !== 'custom';
+      saveMouseAliasState();
+      renderMouseExtraButtons();
+    });
+    mouseCustomCountInput.addEventListener('input', () => {
+      mouseAliasState.customCount = Number(mouseCustomCountInput.value) || 0;
+      saveMouseAliasState();
+      renderMouseExtraButtons();
+    });
+  }
+  renderMouseExtraButtons();
+
+  function renderMouseExtraButtons() {
+    if (!mouseExtraButtonsEl) return;
+    const count = extraButtonCount();
+    mouseExtraButtonsEl.innerHTML = '';
+    for (let i = 1; i <= count; i++) {
+      const aliasKey = mouseAliasState.aliases[i];
+      const div = document.createElement('div');
+      div.className = 'mouse-extra-btn' + (aliasKey ? ' aliased' : '');
+      let sub = 'Click to set';
+      if (aliasKey) {
+        sub = 'Sends: ' + ueKeyLabel(aliasKey);
+        const bindings = state.keyToBindings[aliasKey];
+        if (bindings && bindings.length) {
+          const color = CATEGORY_COLORS[describeAction(bindings[0].name).category] || CATEGORY_COLORS.Other;
+          div.style.borderColor = color;
+          sub += ' → ' + describeAction(bindings[0].name).label;
+        }
+      }
+      div.innerHTML = `Btn ${i + 5}<span class="alias-label">${sub}</span>`;
+      div.addEventListener('click', () => startAliasListening(i));
+      mouseExtraButtonsEl.appendChild(div);
+    }
+  }
+
+  function startAliasListening(slot) {
+    state.listening = { mode: 'alias', slot };
+    const banner = ensureListeningBanner();
+    banner.className = 'listening-banner';
+    banner.innerHTML = `<span>Press the keyboard key your mouse's Button ${slot + 5} actually sends (check your mouse software). Esc cancels.</span>
+      <span class="btn-group"><button id="clearAliasBtn">Clear</button><button id="cancelListenBtn">Cancel</button></span>`;
+    banner.hidden = false;
+    el('cancelListenBtn').addEventListener('click', cancelListening);
+    el('clearAliasBtn').addEventListener('click', () => {
+      delete mouseAliasState.aliases[slot];
+      saveMouseAliasState();
+      cancelListening();
+      renderMouseExtraButtons();
+    });
+    updateHighlights();
+  }
+
+  function applyAliasKey(ueKey) {
+    mouseAliasState.aliases[state.listening.slot] = ueKey;
+    saveMouseAliasState();
+    state.listening = null;
+    if (listeningBannerEl) listeningBannerEl.hidden = true;
+    updateHighlights();
+  }
+
   // ---------- listening / editing (with conflict detection) ----------
   function ensureListeningBanner() {
     if (!listeningBannerEl) {
@@ -255,6 +389,7 @@
   // used by another action/axis, since PUBG will silently allow duplicates.
   function requestBinding(ueKey) {
     if (!state.listening) return;
+    if (state.listening.mode === 'alias') { applyAliasKey(ueKey); return; }
     const excludeId = state.listening.mode === 'existing' ? state.listening.item.id : null;
     const conflicts = state.items.filter((it) => it.ueKey === ueKey && it.id !== excludeId);
     if (conflicts.length > 0) {
