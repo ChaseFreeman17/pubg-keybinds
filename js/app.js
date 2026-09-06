@@ -340,6 +340,28 @@
     startListening({ mode: 'new', kind, name });
   });
 
+  // ---------- copy default config path ----------
+  const copyPathBtn = el('copyPathBtn');
+  if (copyPathBtn) {
+    copyPathBtn.addEventListener('click', async () => {
+      const text = el('pathHintText').textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (e) {
+        // Clipboard API unavailable/blocked: fall back to a temporary selectable textarea.
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (e2) { /* give up silently */ }
+        ta.remove();
+      }
+      const original = copyPathBtn.textContent;
+      copyPathBtn.textContent = 'Copied!';
+      copyPathBtn.classList.add('copied');
+      setTimeout(() => { copyPathBtn.textContent = original; copyPathBtn.classList.remove('copied'); }, 1500);
+    });
+  }
+
   // ---------- file loading ----------
   fileInput.addEventListener('change', () => {
     const file = fileInput.files[0];

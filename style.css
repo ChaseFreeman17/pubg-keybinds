@@ -52,6 +52,15 @@ h1, h2 { margin: 0; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 
+.path-hint {
+  margin: 12px 20px 0; padding: 10px 14px; border-radius: 6px;
+  background: var(--panel); border: 1px solid var(--border); font-size: 0.85rem;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.path-hint code { font-size: 0.82rem; word-break: break-all; }
+.path-hint .muted { font-size: 0.78rem; flex-basis: 100%; }
+#copyPathBtn.copied { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+
 .banner {
   margin: 12px 20px 0; padding: 10px 14px; border-radius: 6px;
   background: #fff6e0; color: #6b5300; border: 1px solid #e8d38a; font-size: 0.88rem;
