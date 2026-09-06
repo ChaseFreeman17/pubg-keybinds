@@ -75,6 +75,13 @@
       <input type="search" id="searchBox" placeholder="Filter actions…">
       <div id="actionList" class="action-list"></div>
     </div>
+    <div class="sidebar-section">
+      <h2>Compare with another file</h2>
+      <p class="muted" style="font-size:0.8rem;margin:0 0 8px;">See what differs from a backup, a friend's config, or a pro's shared layout — and pull individual bindings across.</p>
+      <label class="btn" for="compareFileInput" id="compareFileLabel">Upload file to compare</label>
+      <input type="file" id="compareFileInput" accept=".ini,.txt" hidden>
+      <div id="compareResult" class="compare-result"></div>
+    </div>
   </aside>
 </main>
 

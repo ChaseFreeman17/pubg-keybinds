@@ -1,4 +1,4 @@
-/* app.js — wiring: load file, parse, render keyboard/mouse, edit, export. */
+/* app.js — wiring: load file, parse, render keyboard/mouse, edit, export, compare. */
 (function () {
   const { KEYBOARD_LAYOUT, NAV_LAYOUT, NUMPAD_LAYOUT, MOUSE_BUTTONS,
           ACTION_REFERENCE, CATEGORY_COLORS, describeAction, ueKeyLabel } = window.keydata;
@@ -11,6 +11,7 @@
     listening: null, dirty: false,
   };
   let nextId = 1;
+  let compareState = null; // { filename, items: [...] } — read-only, from a second uploaded file
 
   // ---------- DOM refs ----------
   const el = (id) => document.getElementById(id);
@@ -25,6 +26,8 @@
   const newKnownAction = el('newKnownAction');
   const newCustomName = el('newCustomName');
   const newBindBtn = el('newBindBtn');
+  const compareFileInput = el('compareFileInput');
+  const compareResultEl = el('compareResult');
   let listeningBannerEl = null;
 
   // ---------- banner ----------
@@ -33,7 +36,6 @@
     bannerEl.className = 'banner ' + type;
     bannerEl.textContent = msg;
   }
-  function hideBanner() { bannerEl.hidden = true; }
 
   // ---------- static layout build ----------
   function buildStatic(containerId, rows) {
@@ -81,7 +83,7 @@
     if (!target) return;
     const ueKey = target.dataset.key;
     if (state.listening) {
-      commitBinding(ueKey);
+      requestBinding(ueKey);
     } else {
       showDetail(ueKey);
     }
@@ -180,7 +182,7 @@
     row.querySelector('[data-act="rebind"]').addEventListener('click', () => startListening({ mode: 'existing', item }));
     row.querySelector('[data-act="remove"]').addEventListener('click', () => removeItem(item.id));
     row.querySelectorAll('[data-mod]').forEach((cb) => {
-      cb.addEventListener('change', () => { setMod(item.holder, cb.dataset.mod, cb.checked); markDirty(); });
+      cb.addEventListener('change', () => { setMod(item.holder, cb.dataset.mod, cb.checked); markDirty(); renderCompareDiff(); });
     });
     return row;
   }
@@ -201,19 +203,36 @@
       holder.order = holder.order.filter((k) => k !== field);
     }
   }
+  function modsLabel(mods) {
+    return (mods.ctrl ? 'Ctrl+' : '') + (mods.shift ? 'Shift+' : '') + (mods.alt ? 'Alt+' : '');
+  }
+  function bindingDisplay(item) {
+    return modsLabel(getMods(item.holder)) + ueKeyLabel(item.ueKey);
+  }
 
-  // ---------- listening / editing ----------
-  function startListening(payload) {
-    state.listening = payload;
+  // ---------- listening / editing (with conflict detection) ----------
+  function ensureListeningBanner() {
     if (!listeningBannerEl) {
       listeningBannerEl = document.createElement('div');
       listeningBannerEl.className = 'listening-banner';
       document.querySelector('.layout').before(listeningBannerEl);
     }
+    return listeningBannerEl;
+  }
+
+  function renderListeningPrompt() {
+    const banner = ensureListeningBanner();
+    banner.className = 'listening-banner';
+    const payload = state.listening;
     const label = payload.mode === 'existing' ? describeAction(payload.item.name).label : describeAction(payload.name).label;
-    listeningBannerEl.innerHTML = `<span>Press a key, or click a key/mouse button below, to bind "<strong>${label}</strong>". Esc cancels.</span><button id="cancelListenBtn">Cancel</button>`;
-    listeningBannerEl.hidden = false;
+    banner.innerHTML = `<span>Press a key, or click a key/mouse button below, to bind "<strong>${label}</strong>". Esc cancels.</span><button id="cancelListenBtn">Cancel</button>`;
+    banner.hidden = false;
     el('cancelListenBtn').addEventListener('click', cancelListening);
+  }
+
+  function startListening(payload) {
+    state.listening = payload;
+    renderListeningPrompt();
     updateHighlights();
   }
 
@@ -229,8 +248,32 @@
     const ueKey = window.keydata.CODE_TO_UEKEY[e.code];
     if (!ueKey) return; // unmapped key: ignore, let it pass through
     e.preventDefault();
-    commitBinding(ueKey);
+    requestBinding(ueKey);
   }, true);
+
+  // Idea #1: conflict detection — warn before binding a key that's already
+  // used by another action/axis, since PUBG will silently allow duplicates.
+  function requestBinding(ueKey) {
+    if (!state.listening) return;
+    const excludeId = state.listening.mode === 'existing' ? state.listening.item.id : null;
+    const conflicts = state.items.filter((it) => it.ueKey === ueKey && it.id !== excludeId);
+    if (conflicts.length > 0) {
+      showConflictConfirm(ueKey, conflicts);
+    } else {
+      applyBinding(ueKey);
+    }
+  }
+
+  function showConflictConfirm(ueKey, conflicts) {
+    const banner = ensureListeningBanner();
+    banner.className = 'listening-banner conflict';
+    const names = conflicts.map((c) => describeAction(c.name).label + (c.slotIndex === 1 ? ' (2nd)' : '')).join(', ');
+    banner.innerHTML = `<span>⚠️ ${ueKeyLabel(ueKey)} is already bound to <strong>${names}</strong>. Bind it here too?</span>
+      <span class="btn-group"><button id="conflictConfirmBtn">Bind anyway</button><button id="conflictCancelBtn">Choose another key</button></span>`;
+    banner.hidden = false;
+    el('conflictConfirmBtn').addEventListener('click', () => applyBinding(ueKey));
+    el('conflictCancelBtn').addEventListener('click', renderListeningPrompt);
+  }
 
   function ensureListNode(kind) {
     const fieldName = kind === 'action' ? 'ActionKeyList' : 'AxisKeyList';
@@ -243,7 +286,7 @@
     return node;
   }
 
-  function commitBinding(ueKey) {
+  function applyBinding(ueKey) {
     if (!state.listening) return;
     if (state.listening.mode === 'existing') {
       const item = state.listening.item;
@@ -299,6 +342,7 @@
     rebuildIndex();
     updateHighlights();
     renderSidebar();
+    renderCompareDiff();
   }
 
   // ---------- add-binding form ----------
@@ -348,7 +392,6 @@
       try {
         await navigator.clipboard.writeText(text);
       } catch (e) {
-        // Clipboard API unavailable/blocked: fall back to a temporary selectable textarea.
         const ta = document.createElement('textarea');
         ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
         document.body.appendChild(ta); ta.select();
@@ -362,16 +405,7 @@
     });
   }
 
-  // ---------- file loading ----------
-  fileInput.addEventListener('change', () => {
-    const file = fileInput.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => parseConfig(reader.result, file.name);
-    reader.onerror = () => showBanner('error', 'Could not read that file.');
-    reader.readAsText(file);
-  });
-
+  // ---------- shared parsing core ----------
   // PUBG's real, populated binding data lives in a top-level `CustomInputSettins`
   // entry (PUBG itself misspells "Settings" — no "g") that sits alongside
   // TslPersistantData, not inside it. Each ActionKeyList/AxisKeyList item uses a
@@ -381,80 +415,89 @@
   // struct with the older single-Key wrapper shape also exists in every file
   // observed so far and was always empty — kept here only as a defensive
   // fallback in case some build/version relies on it instead.
-  function collectItems(kind, listField, nameField) {
-    const listNode = state.cisNode.fields[listField];
-    if (!listNode || listNode.type !== 'array') return;
-    for (const itemNode of listNode.items) {
-      if (itemNode.type !== 'struct') continue;
-      const nameNode = itemNode.fields[nameField];
-      if (!nameNode) continue;
-      const name = nameNode.type === 'string' ? nameNode.value : String(nameNode.value || '');
-      const slots = ueini.getKeySlots(itemNode);
-      if (slots) {
-        for (const slotIndex of ueini.KB_SLOT_INDEXES) {
-          const slotNode = slots.items[slotIndex];
-          if (slotNode && slotNode.type === 'struct' && slotNode.fields.Key && slotNode.fields.Key.type === 'raw') {
-            state.items.push({
-              id: nextId++, kind, nameField, format: 'slots', slotsNode: slots, slotIndex,
-              node: itemNode, name, ueKey: slotNode.fields.Key.value, holder: slotNode,
-            });
-          }
-        }
-      } else {
-        const found = ueini.findKeyHolder(itemNode, kind === 'action' ? 'ActionKey' : 'AxisKey');
-        if (found && found.holder.fields.Key && found.holder.fields.Key.type === 'raw') {
-          state.items.push({
-            id: nextId++, kind, nameField, format: 'legacy', wrapperField: found.wrapperFieldName,
-            node: itemNode, name, ueKey: found.holder.fields.Key.value, holder: found.holder,
-          });
-        }
-      }
-    }
-  }
-
-  function parseConfig(text, filename) {
+  function locateCisNode(text) {
     let line = ueini.findLine(text, 'CustomInputSettins');
     let exportKey = 'CustomInputSettins';
     if (!line) { line = ueini.findLine(text, 'CustomInputSettings'); exportKey = 'CustomInputSettings'; }
 
-    let rootNode, cisNode;
     if (line) {
-      rootNode = ueini.parseUEValue(line.valueRaw);
+      const rootNode = ueini.parseUEValue(line.valueRaw);
       if (rootNode.type !== 'struct') {
-        showBanner('error', `Found a top-level "${exportKey}" entry but it wasn't in the expected format — this may be from a different game version.`);
-        return;
+        return { ok: false, error: `Found a top-level "${exportKey}" entry but it wasn't in the expected format — this may be from a different game version.` };
       }
-      cisNode = rootNode;
-    } else {
-      // Fallback: legacy nested TslPersistantData.CustomInputSettings (seen empty on every real file so far).
-      const tline = ueini.findLine(text, 'TslPersistantData');
-      if (!tline) {
-        showBanner('error', "Couldn't find PUBG's keybind data (looked for \"CustomInputSettins\" and \"TslPersistantData\") — is this PUBG's GameUserSettings.ini (usually under %LOCALAPPDATA%\\TslGame\\Saved\\Config\\WindowsNoEditor\\)?");
-        return;
-      }
-      const tslNode = ueini.parseUEValue(tline.valueRaw);
-      if (tslNode.type !== 'struct' || !tslNode.fields.CustomInputSettings || tslNode.fields.CustomInputSettings.type !== 'struct') {
-        showBanner('error', 'Could not locate keybind data in this file.');
-        return;
-      }
-      line = tline; exportKey = 'TslPersistantData';
-      rootNode = tslNode; cisNode = tslNode.fields.CustomInputSettings;
+      return { ok: true, line, exportKey, rootNode, cisNode: rootNode };
     }
 
+    const tline = ueini.findLine(text, 'TslPersistantData');
+    if (!tline) {
+      return { ok: false, error: "Couldn't find PUBG's keybind data (looked for \"CustomInputSettins\" and \"TslPersistantData\") — is this PUBG's GameUserSettings.ini (usually under %LOCALAPPDATA%\\TslGame\\Saved\\Config\\WindowsNoEditor\\)?" };
+    }
+    const tslNode = ueini.parseUEValue(tline.valueRaw);
+    if (tslNode.type !== 'struct' || !tslNode.fields.CustomInputSettings || tslNode.fields.CustomInputSettings.type !== 'struct') {
+      return { ok: false, error: 'Could not locate keybind data in this file.' };
+    }
+    return { ok: true, line: tline, exportKey: 'TslPersistantData', rootNode: tslNode, cisNode: tslNode.fields.CustomInputSettings };
+  }
+
+  /** Pure extraction: returns a flat array of KB/M bindings from a CustomInputSettings-shaped struct. No ids. */
+  function parseAllBindings(cisNode) {
+    const items = [];
+    function collect(kind, listField, nameField) {
+      const listNode = cisNode.fields[listField];
+      if (!listNode || listNode.type !== 'array') return;
+      for (const itemNode of listNode.items) {
+        if (itemNode.type !== 'struct') continue;
+        const nameNode = itemNode.fields[nameField];
+        if (!nameNode) continue;
+        const name = nameNode.type === 'string' ? nameNode.value : String(nameNode.value || '');
+        const slots = ueini.getKeySlots(itemNode);
+        if (slots) {
+          for (const slotIndex of ueini.KB_SLOT_INDEXES) {
+            const slotNode = slots.items[slotIndex];
+            if (slotNode && slotNode.type === 'struct' && slotNode.fields.Key && slotNode.fields.Key.type === 'raw') {
+              items.push({ kind, name, nameField, format: 'slots', slotIndex, slotsNode: slots, node: itemNode, ueKey: slotNode.fields.Key.value, holder: slotNode });
+            }
+          }
+        } else {
+          const found = ueini.findKeyHolder(itemNode, kind === 'action' ? 'ActionKey' : 'AxisKey');
+          if (found && found.holder.fields.Key && found.holder.fields.Key.type === 'raw') {
+            items.push({ kind, name, nameField, format: 'legacy', slotIndex: null, wrapperField: found.wrapperFieldName, node: itemNode, ueKey: found.holder.fields.Key.value, holder: found.holder });
+          }
+        }
+      }
+    }
+    collect('action', 'ActionKeyList', 'ActionName');
+    collect('axis', 'AxisKeyList', 'AxisName');
+    return items;
+  }
+
+  // ---------- file loading (main, editable) ----------
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => parseConfig(reader.result, file.name);
+    reader.onerror = () => showBanner('error', 'Could not read that file.');
+    reader.readAsText(file);
+  });
+
+  function parseConfig(text, filename) {
+    const located = locateCisNode(text);
+    if (!located.ok) { showBanner('error', located.error); return; }
+
     state.rawText = text; state.filename = filename;
-    state.lineStart = line.start; state.lineEnd = line.end;
-    state.exportKey = exportKey; state.rootNode = rootNode; state.cisNode = cisNode;
-    state.items = []; nextId = 1; state.dirty = false;
+    state.lineStart = located.line.start; state.lineEnd = located.line.end;
+    state.exportKey = located.exportKey; state.rootNode = located.rootNode; state.cisNode = located.cisNode;
+    nextId = 1;
+    state.items = parseAllBindings(state.cisNode).map((it) => ({ id: nextId++, ...it }));
+    state.dirty = false;
     if (state.listening) cancelListening();
     detailPanel.hidden = true;
 
-    collectItems('action', 'ActionKeyList', 'ActionName');
-    collectItems('axis', 'AxisKeyList', 'AxisName');
-
     if (state.items.length === 0) {
-      showBanner('info', `Loaded "${exportKey}", but it had no populated keyboard/mouse bindings. Use "Add binding" below to create bindings from scratch.`);
+      showBanner('info', `Loaded "${located.exportKey}", but it had no populated keyboard/mouse bindings. Use "Add binding" below to create bindings from scratch.`);
     } else {
-      showBanner('info', `Loaded ${state.items.length} keyboard/mouse binding(s) from ${filename} (field: ${exportKey}).`);
+      showBanner('info', `Loaded ${state.items.length} keyboard/mouse binding(s) from ${filename} (field: ${located.exportKey}).`);
     }
     exportBtn.disabled = false;
     refreshAddBtnState();
@@ -475,4 +518,128 @@
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   });
+
+  // ---------- Idea #5: compare with another file ----------
+  compareFileInput.addEventListener('change', () => {
+    const file = compareFileInput.files[0];
+    if (!file) return;
+    if (!state.cisNode) {
+      showBanner('error', 'Load your main config first (Upload config, top right) before comparing against another file.');
+      compareFileInput.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const located = locateCisNode(reader.result);
+      if (!located.ok) {
+        compareResultEl.innerHTML = `<p class="muted" style="font-size:0.82rem;">Couldn't read that file: ${located.error}</p>`;
+        return;
+      }
+      compareState = { filename: file.name, items: parseAllBindings(located.cisNode) };
+      renderCompareDiff();
+    };
+    reader.onerror = () => { compareResultEl.innerHTML = `<p class="muted" style="font-size:0.82rem;">Could not read that file.</p>`; };
+    reader.readAsText(file);
+  });
+
+  function diffKey(item) {
+    return item.kind + ':' + item.name + ':' + (item.slotIndex === null ? 'legacy' : item.slotIndex);
+  }
+
+  function renderCompareDiff() {
+    if (!compareState) { compareResultEl.innerHTML = ''; return; }
+    if (!state.cisNode) { compareResultEl.innerHTML = `<p class="muted" style="font-size:0.82rem;">Load your main config first.</p>`; return; }
+
+    const mapMine = new Map(state.items.map((it) => [diffKey(it), it]));
+    const mapTheirs = new Map(compareState.items.map((it) => [diffKey(it), it]));
+    const allKeys = new Set([...mapMine.keys(), ...mapTheirs.keys()]);
+
+    const rows = [];
+    let sameCount = 0;
+    for (const key of allKeys) {
+      const mine = mapMine.get(key);
+      const theirs = mapTheirs.get(key);
+      if (mine && theirs) {
+        const mineDisplay = bindingDisplay(mine);
+        const theirsDisplay = modsLabel(getMods(theirs.holder)) + ueKeyLabel(theirs.ueKey);
+        if (mineDisplay === theirsDisplay) { sameCount++; continue; }
+        rows.push({ type: 'changed', mine, theirs, mineDisplay, theirsDisplay });
+      } else if (theirs && !mine) {
+        rows.push({ type: 'added', theirs, theirsDisplay: modsLabel(getMods(theirs.holder)) + ueKeyLabel(theirs.ueKey) });
+      } else if (mine && !theirs) {
+        rows.push({ type: 'removed', mine, mineDisplay: bindingDisplay(mine) });
+      }
+    }
+
+    if (rows.length === 0) {
+      compareResultEl.innerHTML = `<p class="diff-summary">Compared with ${compareState.filename}: no differences in ${sameCount} matching binding(s). 🎉</p>`;
+      return;
+    }
+
+    const typeOrder = { changed: 0, added: 1, removed: 2 };
+    rows.sort((a, b) => typeOrder[a.type] - typeOrder[b.type] || (a.mine || a.theirs).name.localeCompare((b.mine || b.theirs).name));
+
+    const rowsHtml = rows.map((r) => {
+      const ref = r.mine || r.theirs;
+      const d = describeAction(ref.name);
+      const slotTag = ref.slotIndex === 1 ? ' (2nd)' : '';
+      let body = '';
+      if (r.type === 'changed') {
+        body = `<div class="diff-values"><span class="mine">Yours: ${r.mineDisplay}</span><span class="theirs">${compareState.filename}: ${r.theirsDisplay}</span></div>
+          <button data-apply="${rows.indexOf(r)}">Use ${compareState.filename}'s value</button>`;
+      } else if (r.type === 'added') {
+        body = `<div class="diff-values"><span class="mine">Yours: (unbound)</span><span class="theirs">${compareState.filename}: ${r.theirsDisplay}</span></div>
+          <button data-apply="${rows.indexOf(r)}">Add this binding</button>`;
+      } else {
+        body = `<div class="diff-values"><span class="mine">Yours: ${r.mineDisplay}</span><span class="theirs">${compareState.filename}: (unbound)</span></div>`;
+      }
+      return `<div class="diff-row diff-${r.type}"><div class="diff-row-top"><strong>${d.label}${r.kind === 'axis' ? ' (axis)' : ''}${slotTag}</strong></div>${body}</div>`;
+    }).join('');
+
+    compareResultEl.innerHTML = `<p class="diff-summary">Compared with ${compareState.filename}: ${rows.length} difference(s), ${sameCount} matching.</p>` + rowsHtml;
+
+    compareResultEl.querySelectorAll('[data-apply]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const row = rows[Number(btn.dataset.apply)];
+        applyFromCompare(row.theirs);
+      });
+    });
+  }
+
+  /** Copy a binding (key + modifiers) from the compare file into the main, editable config. */
+  function applyFromCompare(theirsItem) {
+    const { kind, name, nameField, slotIndex, ueKey } = theirsItem;
+    const targetSlotIndex = slotIndex === null ? 0 : slotIndex;
+    const listField = kind === 'action' ? 'ActionKeyList' : 'AxisKeyList';
+    const listNode = ensureListNode(kind);
+
+    let targetNode = listNode.items.find((n) => n.type === 'struct' && n.fields[nameField] && n.fields[nameField].type === 'string' && n.fields[nameField].value === name);
+    let slots;
+    if (targetNode) {
+      slots = ueini.getKeySlots(targetNode);
+      if (!slots) {
+        slots = { type: 'array', items: [{ type: 'array', items: [] }, { type: 'array', items: [] }, { type: 'array', items: [] }] };
+        targetNode.fields.Keys = slots;
+        if (!targetNode.order.includes('Keys')) targetNode.order.push('Keys');
+      }
+    } else {
+      const extra = kind === 'axis' ? { Scale: { type: 'raw', value: '1.000000' } } : null;
+      targetNode = ueini.makeSlotsBindingItem(nameField, name, ueKey, extra);
+      listNode.items.push(targetNode);
+      slots = ueini.getKeySlots(targetNode);
+    }
+    ueini.setSlotKey(slots, targetSlotIndex, ueKey);
+    const holder = slots.items[targetSlotIndex];
+    const mods = getMods(theirsItem.holder);
+    setMod(holder, 'bShift', mods.shift);
+    setMod(holder, 'bCtrl', mods.ctrl);
+    setMod(holder, 'bAlt', mods.alt);
+
+    const existingIdx = state.items.findIndex((it) => it.kind === kind && it.name === name && it.slotIndex === targetSlotIndex);
+    const newItem = { id: existingIdx !== -1 ? state.items[existingIdx].id : nextId++, kind, name, nameField, format: 'slots', slotIndex: targetSlotIndex, slotsNode: slots, holder, node: targetNode, ueKey };
+    if (existingIdx !== -1) state.items[existingIdx] = newItem; else state.items.push(newItem);
+
+    markDirty();
+    renderAll();
+  }
 })();
